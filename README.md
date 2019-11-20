@@ -14,6 +14,13 @@ Filament is currently used in the
 [Sceneform](https://developers.google.com/ar/develop/java/sceneform/) library both at runtime on
 Android devices and as the renderer inside the Android Studio plugin.
 
+## Nibiru XR SDK
+We have added support for Nibiru XR SDK based on Filament V1.4.0.
+Use this special version of filament, your apks can run on Nibiru' XR OS.
+
+Nibiru Official Website:
+http://www.inibiru.com/en/index.html
+
 ## Download
 
 [Download Filament releases](https://github.com/google/filament/releases) to access stable builds.

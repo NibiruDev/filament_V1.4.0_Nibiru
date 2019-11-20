@@ -52,6 +52,41 @@ if (renderer.beginFrame(swapChain!!)) {
     ++renderedFrames
 }
 
+[Tip]
+
+If you want to compile the filament, you can refer to the offical wiki.
 
 [Powered by Nibiru]
 http://www.inibiru.com/en/index.html
+
+[FileList Changed By Nibiru]
+android/filament-android/src/main/cpp/Engine.cpp
+android/filament-android/src/main/java/com/google/android/filament/Engine.java
+filament/backend/CMakeLists.txt
+filament/backend/include/backend/Platform.h
+filament/backend/include/private/backend/DriverAPI.inc
+filament/backend/src/opengl/OpenGLDriver.cpp
+filament/backend/src/opengl/OpenGLDriver.h
+filament/backend/src/opengl/OpenGLDriverFactory.h
+filament/backend/src/opengl/PlatformEGL.cpp
+filament/backend/src/opengl/OpenGLDriver.h
+filament/backend/src/vulkan/VulkanDriver.cpp
+filament/include/filament/Engine.h
+filament/src/Engine.cpp
+filament/src/Renderer.cpp
+filament/src/details/Engine.h
+filament/src/details/Renderer.h
+filament/src/fg/FrameGraph.cpp
+[FileList Changed By Nibiru]
+
+
+
+
+
+
+
+
+
+
+
+
