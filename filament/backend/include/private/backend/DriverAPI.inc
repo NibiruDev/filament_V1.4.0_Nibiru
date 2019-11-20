@@ -39,6 +39,17 @@
  * DECL_DRIVER_API is automatically undefined.
  */
 
+// nibiru code
+#define PLUGIN_SDK_VERSION 20191114
+
+#define NIBIRU_CODE_ENABLED
+// one frame screen shot : sdcard/filament
+//#define NIBIRU_SCREEN_SHOT
+
+// bool to enable log
+#define NIBIRU_LOG_ENABLED 0
+// nibiru code
+
 #ifndef DECL_DRIVER_API
 #error "The DECL_DRIVER_API() macro must be defined before including this file"
 #define DECL_DRIVER_API(M, D, P)
@@ -218,6 +229,19 @@ DECL_DRIVER_API_SYNCHRONOUS_0(bool, isFrameTimeSupported)
 DECL_DRIVER_API_SYNCHRONOUS_0(bool, canGenerateMipmaps)
 DECL_DRIVER_API_SYNCHRONOUS_N(void, setupExternalImage, void*, image)
 DECL_DRIVER_API_SYNCHRONOUS_N(void, cancelExternalImage, void*, image)
+
+// nibiru code
+#ifdef NIBIRU_CODE_ENABLED
+DECL_DRIVER_API_SYNCHRONOUS_N(void, getHeadPose, int, frameId, float*, pose)
+DECL_DRIVER_API_SYNCHRONOUS_N(void, getEyeBufferSize, int&, width, int&, height) // eye : 0=left,right=1
+DECL_DRIVER_API_SYNCHRONOUS_N(void, getEyeProjection, int, eye, double*, projection)
+DECL_DRIVER_API_SYNCHRONOUS_0(float, getNearPlane)
+DECL_DRIVER_API_SYNCHRONOUS_0(int, getSubmitFrameStatus)
+
+DECL_DRIVER_API_N(beginRenderFrame, int, frameId)
+DECL_DRIVER_API_N(endRenderFrame, int, frameId, bool , isSkipped)
+#endif
+// nibiru code
 
 /*
  * Updating driver objects

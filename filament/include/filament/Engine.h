@@ -183,7 +183,7 @@ public:
      * This method is thread-safe.
      */
     static Engine* create(Backend backend = Backend::DEFAULT,
-            Platform* platform = nullptr, void* sharedGLContext = nullptr);
+            Platform* platform = nullptr, void* sharedGLContext = nullptr, long nibiruServicePtr = 0);
 
     /**
      * Destroy the Engine instance and all associated resources.

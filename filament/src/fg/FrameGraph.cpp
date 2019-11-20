@@ -658,7 +658,9 @@ void FrameGraph::execute(FEngine& engine, DriverApi& driver) noexcept {
         }
     }
     // this is a good place to kick the GPU, since we've just done a bunch of work
+    #ifndef NIBIRU_CODE_ENABLED
     driver.flush();
+    #endif
     reset();
 }
 
@@ -669,7 +671,9 @@ void FrameGraph::execute(DriverApi& driver) noexcept {
         }
     }
     // this is a good place to kick the GPU, since we've just done a bunch of work
+    #ifndef NIBIRU_CODE_ENABLED
     driver.flush();
+    #endif
     reset();
 }
 

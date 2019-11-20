@@ -96,7 +96,9 @@ void FRenderer::init() noexcept {
     }
 
     if (UTILS_HAS_THREADING) {
+        #ifndef NIBIRU_CODE_ENABLED
         mFrameInfoManager.run();
+        #endif
     }
 }
 
@@ -123,8 +125,10 @@ void FRenderer::terminate(FEngine& engine) {
     // that all pending commands have been executed (as they could reference data in this
     // instance, e.g. Fences, Callbacks, etc...)
     if (UTILS_HAS_THREADING) {
+        #ifndef NIBIRU_CODE_ENABLED
         Fence::waitAndDestroy(engine.createFence(FFence::Type::SOFT));
         mFrameInfoManager.terminate();
+        #endif
     } else {
         // In single threaded mode, allow recently-created objects (e.g. no-op fences in Skipper)
         // to initialize themselves, otherwise the engine tries to destroy invalid handles.
@@ -172,6 +176,48 @@ void FRenderer::render(FView const* view) {
 
         // create a master job so no other job can escape
         auto masterJob = js.setMasterJob(js.createJob());
+
+        FEngine::DriverApi& driver = engine.getDriverApi();
+        FView& viewTemp = const_cast<FView&>(*view);
+        FCamera& cam = viewTemp.getCameraUser();
+
+        int widthVp = 1; 
+        int heightVp = 1;
+        int eyeType = -1;
+        driver.getEyeBufferSize(widthVp, heightVp);
+        if(frameBegin == -1)
+        {
+            // left eye
+            eyeType = 0;
+            // get head pose, one frame once
+            float pose[16];
+            driver.getHeadPose(mFrameId, pose);
+            driver.beginRenderFrame(mFrameId);
+
+            // camera left/right
+            mat4f objMat = *reinterpret_cast<const filament::math::mat4f*>(pose);
+            cam.setModelMatrix(objMat);
+
+            filament::Viewport viewportTemp(0, 0, widthVp, heightVp);
+            viewTemp.setViewport(viewportTemp);
+
+            // projection
+            double projection[16];
+            driver.getEyeProjection(eyeType, projection);
+            cam.setCustomProjection(*reinterpret_cast<const filament::math::mat4*>(projection), driver.getNearPlane(), 1000.0f);
+
+            frameBegin = 0;
+        } else {
+            eyeType = 1;
+            // right eye
+            filament::Viewport viewportTemp(widthVp, 0, widthVp, heightVp);
+            viewTemp.setViewport(viewportTemp);
+
+            // projection
+            double projection[16];
+            driver.getEyeProjection(eyeType, projection);
+            cam.setCustomProjection(*reinterpret_cast<const filament::math::mat4*>(projection), driver.getNearPlane(), 1000.0f);
+        }
 
         // execute the render pass
         renderJob(rootArena, const_cast<FView&>(*view));
@@ -500,6 +546,17 @@ bool FRenderer::beginFrame(FSwapChain* swapChain) {
     int64_t monotonic_clock_ns (std::chrono::steady_clock::now().time_since_epoch().count());
     driver.beginFrame(monotonic_clock_ns, mFrameId);
 
+
+#ifdef NIBIRU_CODE_ENABLED
+    if(driver.getSubmitFrameStatus() == 0)
+    {
+        frameBegin = -1;
+        driver.endRenderFrame(mFrameId, true);
+        engine.flush();
+        // slog.d << "FRenderer::beginFrame mFrameSkipper.beginFrame = false, frameBegin " << frameBegin << ", frameId=" << mFrameId << io::endl;
+        return false;
+    }
+#else
     // This need to occur after the backend beginFrame() because some backends need to start
     // a command buffer before creating a fence.
     if (UTILS_HAS_THREADING) {
@@ -512,7 +569,8 @@ bool FRenderer::beginFrame(FSwapChain* swapChain) {
         engine.flush();
         return false;
     }
-
+#endif
+ 
     // latch the frame time
     std::chrono::duration<double> time{ getUserTime() };
     float h = float(time.count());
@@ -531,10 +589,14 @@ void FRenderer::endFrame() {
     FEngine& engine = getEngine();
     FEngine::DriverApi& driver = engine.getDriverApi();
 
+#ifdef NIBIRU_CODE_ENABLED
+    // log.d << "FRenderer::endFrame success, frameBegin " << frameBegin << ", frameId=" << mFrameId << io::endl;
+    frameBegin = -1;
+    driver.endRenderFrame(mFrameId, false);
+    // nibiru code
+#else
     FrameInfoManager& frameInfoManager = mFrameInfoManager;
-
     if (UTILS_HAS_THREADING) {
-
         // on debug builds this helps catching cases where we're writing to
         // the buffer form another thread, which is currently not allowed.
         driver.debugThreading();
@@ -542,6 +604,7 @@ void FRenderer::endFrame() {
         frameInfoManager.endFrame();
     }
     mFrameSkipper.endFrame();
+#endif
 
     if (mSwapChain) {
         mSwapChain->commit(driver);

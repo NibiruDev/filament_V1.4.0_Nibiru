@@ -57,6 +57,10 @@ public:
      * @return nullptr on failure, or a pointer to the newly created driver.
      */
     virtual backend::Driver* createDriver(void* sharedContext) noexcept = 0;
+
+    // nibiru code
+    virtual backend::Driver* createDriver(void* sharedContext, long nvrService) { return nullptr; }
+	// nibiru code
 };
 
 

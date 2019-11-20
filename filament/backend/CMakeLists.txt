@@ -15,6 +15,9 @@ set(PUBLIC_HDRS
         include/backend/PixelBufferDescriptor.h
         include/backend/Platform.h
         include/backend/TargetBufferInfo.h
+		# nibiru
+		src/nibiru/NibiruImport.h
+		# nibiru
 )
 
 set(SRCS
@@ -30,6 +33,9 @@ set(SRCS
         src/Program.cpp
         src/SamplerGroup.cpp
         src/TextureReshaper.cpp
+		# nibiru
+		src/nibiru/NibiruImport.cpp
+		# nibiru
 )
 
 set(PRIVATE_HDRS

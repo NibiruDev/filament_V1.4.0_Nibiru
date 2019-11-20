@@ -153,8 +153,8 @@ public class Engine {
      *
      */
     @NonNull
-    public static Engine create() {
-        long nativeEngine = nCreateEngine(0, 0);
+    public static Engine create(long nvrService) {
+        long nativeEngine = nCreateEngine(0, 0, nvrService);
         if (nativeEngine == 0) throw new IllegalStateException("Couldn't create Engine");
         return new Engine(nativeEngine);
     }
@@ -175,8 +175,8 @@ public class Engine {
      *
      */
     @NonNull
-    public static Engine create(@NonNull Backend backend) {
-        long nativeEngine = nCreateEngine(backend.ordinal(), 0);
+    public static Engine create(@NonNull Backend backend, long nvrService) {
+        long nativeEngine = nCreateEngine(backend.ordinal(), 0, nvrService);
         if (nativeEngine == 0) throw new IllegalStateException("Couldn't create Engine");
         return new Engine(nativeEngine);
     }
@@ -199,10 +199,10 @@ public class Engine {
      *
      */
     @NonNull
-    public static Engine create(@NonNull Object sharedContext) {
+    public static Engine create(@NonNull Object sharedContext, long nvrService) {
         if (Platform.get().validateSharedContext(sharedContext)) {
             long nativeEngine = nCreateEngine(0,
-                    Platform.get().getSharedContextNativeHandle(sharedContext));
+                    Platform.get().getSharedContextNativeHandle(sharedContext), nvrService);
             if (nativeEngine == 0) throw new IllegalStateException("Couldn't create Engine");
             return new Engine(nativeEngine);
         }
@@ -599,7 +599,7 @@ public class Engine {
         mNativeObject = 0;
     }
 
-    private static native long nCreateEngine(long backend, long sharedContext);
+    private static native long nCreateEngine(long backend, long sharedContext, long nvrServicePtr);
     private static native void nDestroyEngine(long nativeEngine);
     private static native long nGetBackend(long nativeEngine);
     private static native long nCreateSwapChain(long nativeEngine, Object nativeWindow, long flags);

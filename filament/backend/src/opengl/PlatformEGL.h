@@ -40,6 +40,8 @@ public:
     PlatformEGL() noexcept;
 
     backend::Driver* createDriver(void* sharedContext) noexcept override;
+    virtual backend::Driver* createDriver(void* sharedContext, long nvrService) override;
+
     void terminate() noexcept override;
 
     SwapChain* createSwapChain(void* nativewindow, uint64_t& flags) noexcept final;

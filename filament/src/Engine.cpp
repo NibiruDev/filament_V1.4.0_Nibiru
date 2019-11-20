@@ -74,11 +74,15 @@ namespace details {
 static std::unordered_map<Engine const*, std::unique_ptr<FEngine>> sEngines;
 static std::mutex sEnginesLock;
 
-FEngine* FEngine::create(Backend backend, Platform* platform, void* sharedGLContext) {
+FEngine* FEngine::create(Backend backend, Platform* platform, void* sharedGLContext, long nibiruServicePtr) {
     FEngine* instance = new FEngine(backend, platform, sharedGLContext);
+    // nibiru code
+    instance->nvrServicePtr = nibiruServicePtr;
 
     slog.i << "FEngine (" << sizeof(void*) * 8 << " bits) created at " << instance << " "
-            << "(threading is " << (UTILS_HAS_THREADING ? "enabled)" : "disabled)") << io::endl;
+            << "(threading is " << (UTILS_HAS_THREADING ? "enabled)" : "disabled)") 
+            << " sharedGLContext " << (sharedGLContext == nullptr)
+            << io::endl;
 
     // initialize all fields that need an instance of FEngine
     // (this cannot be done safely in the ctor)
@@ -403,7 +407,7 @@ int FEngine::loop() {
     }
 #endif
 
-    mDriver = platform->createDriver(mSharedGLContext);
+    mDriver = platform->createDriver(mSharedGLContext, nvrServicePtr);
     mDriverBarrier.latch();
     if (UTILS_UNLIKELY(!mDriver)) {
         // if we get here, it's because the driver couldn't be initialized and the problem has
@@ -419,6 +423,7 @@ int FEngine::loop() {
     // Either way the main reason to do this is to avoid this thread jumping from core to core
     // and loose its caches in the process.
     uint32_t id = std::thread::hardware_concurrency() - 1;
+    slog.d << "Engine Thread Cpu Id : " << id << io::endl;
 
     while (true) {
         // looks like thread affinity needs to be reset regularly (on Android)
@@ -549,6 +554,8 @@ FSwapChain* FEngine::createSwapChain(void* nativeWindow, uint64_t flags) noexcep
     if (p) {
         mSwapChains.insert(p);
     }
+    // execute nibiru api as soon as possible
+    flush();
     return p;
 }
 
@@ -743,8 +750,8 @@ bool FEngine::execute() {
 
 using namespace details;
 
-Engine* Engine::create(Backend backend, Platform* platform, void* sharedGLContext) {
-    std::unique_ptr<FEngine> engine(FEngine::create(backend, platform, sharedGLContext));
+Engine* Engine::create(Backend backend, Platform* platform, void* sharedGLContext, long nibiruServicePtr) {
+    std::unique_ptr<FEngine> engine(FEngine::create(backend, platform, sharedGLContext, nibiruServicePtr));
     if (UTILS_UNLIKELY(!engine)) {
         // something went wrong during the driver or engine initialization
         return nullptr;

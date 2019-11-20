@@ -131,6 +131,10 @@ private:
     // per-frame arena for this Renderer
     LinearAllocatorArena& mPerRenderPassArena;
 
+    // nibiru code
+    int frameBegin = -1;
+    // nibiru code
+
 #if EXTRA_TIMING_INFO
     Series<float> mRendering;
     Series<float> mPostProcess;

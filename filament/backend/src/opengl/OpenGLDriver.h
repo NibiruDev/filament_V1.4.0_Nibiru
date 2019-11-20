@@ -32,6 +32,19 @@
 
 #include <assert.h>
 
+// nibiru code
+#include <time.h>
+#include <thread>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <nibiru/NibiruImport.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <android/native_window.h>
+
+typedef EGLint (GL_APIENTRYP PFNEGL_GVR_FRONTBUFFER_) (EGLSurface surface_);
+
+#define NIBIRU_FBO_COUNT 3
+// nibiru code
 
 namespace filament {
 
@@ -45,10 +58,11 @@ class OpenGLProgram;
 class OpenGLBlitter;
 
 class OpenGLDriver final : public backend::DriverBase {
-    inline explicit OpenGLDriver(backend::OpenGLPlatform* platform) noexcept;
+    inline explicit OpenGLDriver(backend::OpenGLPlatform* platform, long nvrService) noexcept;
     ~OpenGLDriver() noexcept final;
 
 public:
+    static backend::Driver* create(backend::OpenGLPlatform* platform, void* sharedGLContext, long nvrService) noexcept;
     static backend::Driver* create(backend::OpenGLPlatform* platform, void* sharedGLContext) noexcept;
 
     // OpenGLDriver specific fields
@@ -377,6 +391,42 @@ private:
     void updateStream(GLTexture* t, backend::DriverApi* driver) noexcept;
     void updateBuffer(GLenum target, GLBuffer* buffer, backend::BufferDescriptor const& p, uint32_t alignment = 16) noexcept;
     void updateTextureLodRange(GLTexture* texture, int8_t targetLevel) noexcept;
+
+    // nibiru code
+private:
+    bool hasEnterVRMode;
+    long nvrServicePtr;
+    
+    int curTextureId;
+    int curTextureIndex;
+    int curViewerNumber;
+
+    int nvrViewNumber;
+
+    float nearPlane;
+
+	float profileData[17];
+    
+    GLuint nvrFramebuffer[NIBIRU_FBO_COUNT];
+    int nvrColorBuf[NIBIRU_FBO_COUNT];
+    GLuint nvrDepthBuf[NIBIRU_FBO_COUNT];
+    GLuint nvrTextureBuf[NIBIRU_FBO_COUNT];
+    void createFBOS(int index, int mBufferWidth, int mBufferHeight);
+    void destroyFBOS();
+
+    std::thread mDtrThread;
+    int dtrThreadLoop(EGLContext mEGLContextMain, void* nativeWindow, EGLContext mContextDTR);
+
+    int eyeViewportWidth;
+    int eyeViewportHeight;
+
+    double projectionLeft[16];
+    double projectionRight[16];
+
+    // 0=submited frame, 1=finish frame
+    int submitFrameStatus = -1;
+    // nibiru code
+
 };
 
 // ------------------------------------------------------------------------------------------------

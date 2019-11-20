@@ -64,8 +64,11 @@ using namespace utils;
 namespace filament {
 namespace backend {
 
-Driver* OpenGLDriverFactory::create(
-        OpenGLPlatform* const platform, void* const sharedGLContext) noexcept {
+Driver* OpenGLDriverFactory::create(OpenGLPlatform* const platform, void* const sharedGLContext, long nvrService) noexcept {
+    return OpenGLDriver::create(platform, sharedGLContext, nvrService);
+}
+
+Driver* OpenGLDriverFactory::create(OpenGLPlatform* const platform, void* const sharedGLContext) noexcept {
     return OpenGLDriver::create(platform, sharedGLContext);
 }
 
@@ -108,7 +111,51 @@ Driver* OpenGLDriver::create(
         }
     }
 
-    OpenGLDriver* const driver = new OpenGLDriver(ec);
+    OpenGLDriver* const driver = new OpenGLDriver(ec, 0);
+    return driver;
+}
+
+UTILS_NOINLINE
+Driver* OpenGLDriver::create(
+        OpenGLPlatform* const platform, void* const sharedGLContext, long nvrService) noexcept {
+    assert(platform);
+    OpenGLPlatform* const ec = platform;
+
+    {
+        // nibiru code
+#ifdef NIBIRU_CODE_ENABLED
+        NibiruImport::Init();
+        slog.d << "[Nibiru]: Init" << io::endl;
+#endif
+
+        // here we check we're on a supported version of GL before initializing the driver
+        GLint major = 0, minor = 0;
+        glGetIntegerv(GL_MAJOR_VERSION, &major);
+        glGetIntegerv(GL_MINOR_VERSION, &minor);
+
+        if (UTILS_UNLIKELY(glGetError() != GL_NO_ERROR)) {
+            PANIC_LOG("Can't get OpenGL version");
+            cleanup:
+            ec->terminate();
+            return {};
+        }
+
+        if (GLES31_HEADERS) {
+            // we require GLES 3.1 headers, but we support GLES 3.0
+            if (UTILS_UNLIKELY(!(major >= 3 && minor >= 0))) {
+                PANIC_LOG("OpenGL ES 3.0 minimum needed (current %d.%d)", major, minor);
+                goto cleanup;
+            }
+        } else if (GL41_HEADERS) {
+            // we require GL 4.1 headers and minimum version
+            if (UTILS_UNLIKELY(!((major == 4 && minor >= 1) || major > 4))) {
+                PANIC_LOG("OpenGL 4.1 minimum needed (current %d.%d)", major, minor);
+                goto cleanup;
+            }
+        }
+    }
+
+    OpenGLDriver* const driver = new OpenGLDriver(ec, nvrService);
     return driver;
 }
 
@@ -127,11 +174,18 @@ OpenGLDriver::DebugMarker::~DebugMarker() noexcept {
 
 // ------------------------------------------------------------------------------------------------
 
-OpenGLDriver::OpenGLDriver(OpenGLPlatform* platform) noexcept
+OpenGLDriver::OpenGLDriver(OpenGLPlatform* platform, long nvrService) noexcept
         : DriverBase(new ConcreteDispatcher<OpenGLDriver>()),
           mHandleArena("Handles", 2U * 1024U * 1024U), // TODO: set the amount in configuration
           mSamplerMap(32),
           mPlatform(*platform) {
+    // nibiru code
+    nvrServicePtr = nvrService;
+    hasEnterVRMode = false;
+    eyeViewportWidth = 0;
+    eyeViewportHeight = 0;
+    nearPlane = 0.032f;
+    // nibiru code
 
     std::fill(mSamplerBindings.begin(), mSamplerBindings.end(), nullptr);
 
@@ -155,6 +209,12 @@ OpenGLDriver::OpenGLDriver(OpenGLPlatform* platform) noexcept
 }
 
 OpenGLDriver::~OpenGLDriver() noexcept {
+    // nibiru code
+#ifdef NIBIRU_CODE_ENABLED
+    NibiruImport::Uninit();
+    slog.d << "[Nibiru]: Uninit" << io::endl;
+#endif
+
     delete mOpenGLBlitter;
 }
 
@@ -173,6 +233,11 @@ void OpenGLDriver::terminate() {
     }
     terminateClearProgram();
     mPlatform.terminate();
+    // nibiru code
+#ifdef NIBIRU_CODE_ENABLED
+    NibiruImport::NibiruDestory();
+    slog.d << "[Nibiru]: Destroy" << io::endl;
+#endif
 }
 
 ShaderModel OpenGLDriver::getShaderModel() const noexcept {
@@ -685,6 +750,8 @@ void OpenGLDriver::framebufferTexture(backend::TargetBufferInfo const& binfo,
 
     assert(t->target != SamplerType::SAMPLER_EXTERNAL);
 
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver framebufferTexture fbo=" << rt->gl.fbo << " samples=" << (int) rt->gl.samples << io::endl;
+
     GLenum target = GL_TEXTURE_2D;
     switch (t->target) {
         case SamplerType::SAMPLER_2D:
@@ -805,6 +872,7 @@ void OpenGLDriver::framebufferTexture(backend::TargetBufferInfo const& binfo,
     // available.
     updateTextureLodRange(t, binfo.level);
 
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver framebufferTexture end" << io::endl;
     CHECK_GL_FRAMEBUFFER_STATUS(utils::slog.e)
 }
 
@@ -830,6 +898,7 @@ void OpenGLDriver::renderBufferStorage(GLuint rbo, GLenum internalformat, uint32
 
 void OpenGLDriver::framebufferRenderbuffer(GLTexture const* t,
         GLRenderTarget const* rt, GLenum attachment) noexcept {
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver::framebufferRenderbuffer : fbo=" << rt->gl.fbo << ", attachment=" << t->gl.id << io::endl;        
     auto& gl = mContext;
     gl.bindFramebuffer(GL_FRAMEBUFFER, rt->gl.fbo);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, t->gl.id);
@@ -865,6 +934,9 @@ void OpenGLDriver::createRenderTargetR(Handle<HwRenderTarget> rth,
 
     GLRenderTarget* rt = construct<GLRenderTarget>(rth, width, height);
     glGenFramebuffers(1, &rt->gl.fbo);
+
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver createRenderTargetR " << width << "*" << height << " samples " << (int) samples 
+    << " targets " << (int) targets << " fbo=" << rt->gl.fbo << io::endl;
 
     /*
      * The GLES 3.0 spec states:
@@ -968,6 +1040,7 @@ void OpenGLDriver::createRenderTargetR(Handle<HwRenderTarget> rth,
         }
     }
 
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver createRenderTargetR finish" << io::endl;
     CHECK_GL_ERROR(utils::slog.e)
 }
 
@@ -978,11 +1051,205 @@ void OpenGLDriver::createFenceR(Handle<HwFence> fh, int) {
     f->fence = mPlatform.createFence();
 }
 
+void OpenGLDriver::destroyFBOS()
+{
+    glDeleteFramebuffers(NIBIRU_FBO_COUNT, nvrFramebuffer);
+    glDeleteTextures(NIBIRU_FBO_COUNT, nvrTextureBuf);
+    glDeleteRenderbuffers(NIBIRU_FBO_COUNT, nvrDepthBuf);
+}
+
+void OpenGLDriver::createFBOS(int index, int mBufferWidth, int mBufferHeight)
+{
+    // depth buffer
+    GLuint depthBuf;
+    glGenRenderbuffers(1, &depthBuf);
+    glBindRenderbuffer(GL_RENDERBUFFER, depthBuf);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, mBufferWidth, mBufferHeight);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    // color buffer
+    GLuint colorBuf;
+    glGenTextures(1, &colorBuf);
+    glBindTexture(GL_TEXTURE_2D, colorBuf);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, mBufferWidth, mBufferHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    // frame buffer
+    GLuint framebuffer;
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorBuf, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthBuf);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        slog.d << "FEngine loop glCheckFramebufferStatus not complete" << io::endl;
+    } else {
+        slog.d << mBufferWidth << "*" << mBufferHeight << " FEngine loop FramebufferStatus complete,  fbo=" << framebuffer << ", texture=" << colorBuf << io::endl;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // cache
+    nvrFramebuffer[index] = framebuffer;
+    nvrColorBuf[index] = colorBuf;
+    nvrTextureBuf[index] = colorBuf;
+    nvrDepthBuf[index] = depthBuf;
+}
+
+int OpenGLDriver::dtrThreadLoop(EGLContext mEGLContextMain, void* nativeWindow, EGLContext mContextDTR) {
+   slog.d << "[Nibiru]: dtrThreadLoop" << io::endl;
+   PFNEGL_GVR_FRONTBUFFER_ egl_GVR_FrontBuffer_  = (PFNEGL_GVR_FRONTBUFFER_)eglGetProcAddress("egl_GVR_FrontBuffer");
+
+   EGLDisplay mDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+   // create context
+   const EGLint attribsatw[] = {
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_RENDERABLE_TYPE, 4,
+        EGL_RED_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_BLUE_SIZE, 8,
+        EGL_DEPTH_SIZE, 8,
+        EGL_NONE };
+
+   const EGLint windowAttribs[] = {
+        EGL_RENDER_BUFFER, EGL_SINGLE_BUFFER,
+        EGL_NONE
+    };
+
+   EGLint contextAttribsHigh[] = { EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG,
+        EGL_NONE, EGL_NONE };
+
+   int numConfigs = 0;
+   EGLConfig configdtr;
+   eglChooseConfig(mDisplay, attribsatw, &configdtr, 1, &numConfigs);
+   if(mContextDTR == EGL_NO_CONTEXT) {
+       mContextDTR = eglCreateContext(mDisplay, configdtr, mEGLContextMain, contextAttribsHigh);
+   }
+   // create surface
+   EGLSurface mSurfaceDTR = eglCreateWindowSurface(mDisplay, configdtr, (ANativeWindow*) nativeWindow, windowAttribs);
+   // make current 
+   eglMakeCurrent(mDisplay, mSurfaceDTR, mSurfaceDTR, mContextDTR);
+   // fbr
+   if(egl_GVR_FrontBuffer_)
+   {
+       egl_GVR_FrontBuffer_(mSurfaceDTR);
+       // call once to swap front buffer
+       eglSwapBuffers(mDisplay, mSurfaceDTR);
+       slog.d << "dtrThreadLoop front buffer " << (int) eglGetError() << io::endl;
+   }
+
+   EGLint tmpConfigId;
+   eglGetConfigAttrib(mDisplay, configdtr, EGL_CONFIG_ID, &tmpConfigId);
+   slog.d << "dtrThreadLoop EGLConfig: " << (int)tmpConfigId << io::endl;
+    
+   //Grab some data from the surface and signal we've finished setting up the warp context
+   int warpRenderSurfaceWidth = 0;
+   int warpRenderSurfaceHeight = 0;
+   eglQuerySurface(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW), EGL_WIDTH, &warpRenderSurfaceWidth);
+   eglQuerySurface(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW), EGL_HEIGHT, &warpRenderSurfaceHeight);
+   slog.d << "dtrThreadLoop warpRenderSurface size " << warpRenderSurfaceWidth << "*" << warpRenderSurfaceHeight << " " << (int) eglGetError() << io::endl;
+
+   while(true)
+   {
+      struct timespec wait;
+      struct timespec rem;
+      wait.tv_sec = 1;
+      wait.tv_nsec = 0;
+      nanosleep(&wait, &rem);
+      slog.d << "dtrThreadLoop loop" << io::endl;
+
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      glViewport(0, 0, warpRenderSurfaceWidth, warpRenderSurfaceHeight);
+      glScissor(0, 0, warpRenderSurfaceWidth, warpRenderSurfaceHeight);
+      glClearColor(1, 0, 0, 1);
+      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+      glFinish();
+   }
+   
+   return 0;
+}
+
 void OpenGLDriver::createSwapChainR(Handle<HwSwapChain> sch, void* nativeWindow, uint64_t flags) {
     DEBUG_MARKER()
+    // nibiru code init
+ #ifdef NIBIRU_CODE_ENABLED
+    curTextureIndex = 0;
+    nvrViewNumber = 0;
+    curViewerNumber = 0;
 
+    nvrModeParms parms; 
+	parms.Display = (unsigned long long) eglGetDisplay(EGL_DEFAULT_DISPLAY);
+	parms.WindowSurface = (unsigned long long) nativeWindow;
+	parms.ShareContext = 0;
+
+    // init
+    NibiruImport::NibiruInit(PLUGIN_SDK_VERSION, nvrServicePtr, &parms);
+
+    // nvr config data
+	NibiruImport::NibiruGetNVRConfig(profileData);
+    int fboWidth = 2 * (int)profileData[15];
+    int fboHeight = (int)profileData[16];
+    eyeViewportWidth = (int)profileData[15];
+    eyeViewportHeight = (int)profileData[16];
+    nearPlane = profileData[13];
+    // create texture
+    for(int i = 0; i < NIBIRU_FBO_COUNT; i++)
+    {
+        createFBOS(i, fboWidth, fboHeight);
+    }
+    NibiruImport::NibiruCreateTextures(nvrColorBuf);
+    curTextureId = nvrColorBuf[curTextureIndex];
+    // projection
+    float projectionLeft_F[16];
+    float projectionRight_F[16];
+    NibiruImport::NibiruGetEyeProjection(projectionLeft_F, projectionRight_F);
+    for(int i=0; i< 16; i++)
+    {
+        projectionLeft[i] = (double) projectionLeft_F[i];
+        projectionRight[i] = (double) projectionRight_F[i];
+    }
+
+    // get fbo pbuffer surface
     HwSwapChain* sc = construct<HwSwapChain>(sch);
     sc->swapChain = mPlatform.createSwapChain(nativeWindow, flags);
+
+    // enter vr mode
+	NibiruImport::NibiruEnterVRMode(&parms);
+    
+    // dtr test
+    //EGLContext mEGLContextMain = eglGetCurrentContext();
+
+    // const EGLint attribsatw[] = {
+    //     EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+    //     EGL_RENDERABLE_TYPE, 4,
+    //     EGL_RED_SIZE, 8,
+    //     EGL_GREEN_SIZE, 8,
+    //     EGL_BLUE_SIZE, 8,
+    //     EGL_DEPTH_SIZE, 8,
+    //     EGL_NONE };
+
+    // EGLint contextAttribsHigh[] = { EGL_CONTEXT_CLIENT_VERSION, 3,
+    //     EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG,
+    //     EGL_NONE, EGL_NONE };
+
+    // int numConfigs = 0;
+    // EGLConfig configdtr;
+    // eglChooseConfig(eglGetDisplay(EGL_DEFAULT_DISPLAY), attribsatw, &configdtr, 1, &numConfigs);
+    // EGLContext mContextDTR = eglCreateContext(eglGetDisplay(EGL_DEFAULT_DISPLAY), configdtr, mEGLContextMain, contextAttribsHigh);
+
+    //mDtrThread = std::thread(&OpenGLDriver::dtrThreadLoop, this, mEGLContextMain, nativeWindow, mContextDTR);
+
+    hasEnterVRMode = true;
+    slog.d << "[Nibiru]: EnterVRMode EyeBuffer " << eyeViewportWidth << "*" << eyeViewportHeight << "." << nearPlane << io::endl;
+#else
+    HwSwapChain* sc = construct<HwSwapChain>(sch);
+    sc->swapChain = mPlatform.createSwapChain(nativeWindow, flags);
+#endif
+    // nibiru code
+
+    
 }
 
 void OpenGLDriver::createStreamFromTextureIdR(Handle<HwStream> sh,
@@ -1086,13 +1353,16 @@ void OpenGLDriver::destroyTexture(Handle<HwTexture> th) {
             } else {
                 glDeleteTextures(1, &t->gl.id);
             }
+            slog.d << "OpenGLDriver::glDelete Renderbuffers/Textures" << io::endl;
         } else {
             assert(t->gl.target == GL_RENDERBUFFER);
             assert(t->gl.rb == 0);
             glDeleteRenderbuffers(1, &t->gl.id);
+            slog.d << "OpenGLDriver::glDelete Renderbuffers" << io::endl;
         }
         if (t->gl.fence) {
             glDeleteSync(t->gl.fence);
+            slog.d << "OpenGLDriver::glDeleteSync" << io::endl;
         }
         destruct(th, t);
     }
@@ -1108,6 +1378,7 @@ void OpenGLDriver::destroyRenderTarget(Handle<HwRenderTarget> rth) {
             // first unbind this framebuffer if needed
             gl.bindFramebuffer(GL_FRAMEBUFFER, 0);
             glDeleteFramebuffers(1, &rt->gl.fbo);
+            if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver::destroyRenderTarget: fbo" << io::endl;
         }
         if (rt->gl.fbo_read) {
             // first unbind this framebuffer if needed
@@ -1122,6 +1393,15 @@ void OpenGLDriver::destroySwapChain(Handle<HwSwapChain> sch) {
     DEBUG_MARKER()
 
     if (sch) {
+        slog.d << "PlatformEGL::destroySwapChain" << io::endl;
+        // nibiru code
+#ifdef NIBIRU_CODE_ENABLED
+        destroyFBOS();
+        NibiruImport::NibiruLeaveVRMode();
+        hasEnterVRMode = false;
+#endif
+        // nibiru code
+
         HwSwapChain* sc = handle_cast<HwSwapChain*>(sch);
         mPlatform.destroySwapChain(sc->swapChain);
         destruct(sch, sc);
@@ -1329,6 +1609,18 @@ bool OpenGLDriver::isFrameTimeSupported() {
 
 void OpenGLDriver::commit(Handle<HwSwapChain> sch) {
     DEBUG_MARKER()
+    // submitFrame to nibiru api
+#ifdef NIBIRU_CODE_ENABLED
+    // 把cache的headpose传递给SDK
+    submitFrameStatus = 0;
+    NibiruImport::NibiruSetTexture((void *)(curTextureId), curViewerNumber);
+    submitFrameStatus = 1;
+    if(NIBIRU_LOG_ENABLED) slog.d << curTextureIndex <<" [Nibiru] OpenGLDriver::commit curTextureId=" << curTextureId << " nvrViewNumber=" << curViewerNumber << io::endl;
+
+    curTextureIndex = (curTextureIndex + 1) % NIBIRU_FBO_COUNT;
+    return;
+#endif
+    // hack
 
     if (sch) {
         HwSwapChain* sc = handle_cast<HwSwapChain*>(sch);
@@ -1521,6 +1813,65 @@ void OpenGLDriver::generateMipmaps(Handle<HwTexture> th) {
 bool OpenGLDriver::canGenerateMipmaps() {
     return true;
 }
+
+#ifdef NIBIRU_CODE_ENABLED
+
+int OpenGLDriver::getSubmitFrameStatus()
+{
+    return submitFrameStatus;
+}
+
+void OpenGLDriver::getHeadPose(int frameId, float* pose){
+    if(!hasEnterVRMode)
+    {
+        memset(pose, 0, 16 * sizeof(float));
+        return;
+    }
+    nvr_mat4f matRes = NibiruImport::NibiruGetSensorData(&nvrViewNumber);
+    memcpy(pose, matRes.m[0], 16 * sizeof(float));
+
+    if(NIBIRU_LOG_ENABLED) slog.i << "OpenGLDriver::getHeadPose nvrViewNumber=" << nvrViewNumber << " frameId " << frameId << io::endl;
+}
+
+void OpenGLDriver::beginRenderFrame(int frameId)
+{
+    if(NIBIRU_LOG_ENABLED) slog.i << "OpenGLDriver::beginRenderFrame frameId=" << frameId << " nvrViewNumber=" << nvrViewNumber << io::endl;
+}
+
+void OpenGLDriver::endRenderFrame(int frameId , bool isSkipped)
+{
+    if(NIBIRU_LOG_ENABLED) slog.i << "OpenGLDriver::endRenderFrame frameId=" << frameId << " isSkipped=" << isSkipped << " nvrViewNumber=" << nvrViewNumber << io::endl;
+}
+
+void OpenGLDriver::getEyeBufferSize(int& width, int& height)
+{
+     if(hasEnterVRMode)
+     {
+        width = eyeViewportWidth;
+        height = eyeViewportHeight;
+     } else {
+        width = 1;
+        height = 1;
+     }
+}
+
+void OpenGLDriver::getEyeProjection(int eye, double* projection)
+{
+     if(hasEnterVRMode)
+     {
+        memcpy(projection, eye == 0 ? projectionLeft : projectionRight, 16 * sizeof(double));
+     } else {
+        memset(projection, 0, 16 * sizeof(double));
+     }
+}
+
+float OpenGLDriver::getNearPlane()
+{
+
+     if(hasEnterVRMode) return nearPlane;
+     return 0.032f;
+}
+#endif
 
 void OpenGLDriver::setTextureData(GLTexture* t,
                                   uint32_t level,
@@ -1806,10 +2157,14 @@ void OpenGLDriver::beginRenderPass(Handle<HwRenderTarget> rth,
     const bool ignoreScissor = params.flags.ignoreScissor;
     TargetBufferFlags discardFlags = params.flags.discardStart;
 
+    const TargetBufferFlags discardFlagsEnd = mRenderPassParams.flags.discardEnd;
+
     GLRenderTarget* rt = handle_cast<GLRenderTarget*>(rth);
     if (UTILS_UNLIKELY(gl.getDrawFbo() != rt->gl.fbo)) {
+        #ifndef NIBIRU_CODE_ENABLED
         gl.bindFramebuffer(GL_FRAMEBUFFER, rt->gl.fbo);
-
+        slog.d << "OpenGLDriver beginRenderPass bindFramebuffer " << rt->gl.fbo << " GLES31 " << GLES31_HEADERS << " InvFBO "
+        << (int) gl.bugs.disable_invalidate_framebuffer << io::endl;
         // glInvalidateFramebuffer appeared on GLES 3.0 and GL4.3, for simplicity we just
         // ignore it on GL (rather than having to do a runtime check).
         if (GLES31_HEADERS) {
@@ -1822,6 +2177,20 @@ void OpenGLDriver::beginRenderPass(Handle<HwRenderTarget> rth,
                 CHECK_GL_ERROR(utils::slog.e)
             }
         }
+        #endif
+    }
+    
+    if((int) discardFlagsEnd == 0)
+    {
+#ifdef NIBIRU_CODE_ENABLED
+       // draw to fbo 0, hack draw to sdk
+       if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver beginRenderPass hack fbo to " << nvrFramebuffer[curTextureIndex] << " index " << curTextureIndex
+       << " nvrViewNumber " << nvrViewNumber << io::endl;
+
+       curViewerNumber = nvrViewNumber;
+       curTextureId = nvrColorBuf[curTextureIndex];
+       gl.bindFramebuffer(GL_FRAMEBUFFER, nvrFramebuffer[curTextureIndex]);
+#endif
     }
 
     if (rt->gl.fbo_read) {
@@ -1843,6 +2212,8 @@ void OpenGLDriver::beginRenderPass(Handle<HwRenderTarget> rth,
 
     gl.viewport(params.viewport.left, params.viewport.bottom,
             params.viewport.width, params.viewport.height);
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver beginRenderPass viewport " << params.viewport.left << "," << params.viewport.bottom << ","
+           << params.viewport.width << "," << params.viewport.height << " discardFlagsEnd=" << (int) discardFlagsEnd << io::endl;
 
     // Use scissor test if not told to ignore, and if the viewport doesn't cover the whole target.
     const bool respectScissor = !ignoreScissor &&
@@ -1859,6 +2230,7 @@ void OpenGLDriver::beginRenderPass(Handle<HwRenderTarget> rth,
         const bool clearColor   = any(clearFlags & TargetBufferFlags::COLOR);
         const bool clearDepth   = any(clearFlags & TargetBufferFlags::DEPTH);
         const bool clearStencil = any(clearFlags & TargetBufferFlags::STENCIL);
+        if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver clear " << clearColor << clearDepth << clearStencil << respectScissor << (int) gl.bugs.clears_hurt_performance << io::endl;
         if (respectScissor) {
             gl.enable(GL_SCISSOR_TEST);
         } else {
@@ -1884,6 +2256,7 @@ void OpenGLDriver::beginRenderPass(Handle<HwRenderTarget> rth,
     mContext.bindFramebuffer(GL_FRAMEBUFFER, rt->gl.fbo);
     mContext.disable(GL_SCISSOR_TEST);
     glClear(getAttachmentBitfield(discardFlags & ~clearFlags));
+    slog.d << "OpenGLDriver clear the discarde " << io::endl;
 #endif
 }
 
@@ -1898,10 +2271,12 @@ void OpenGLDriver::endRenderPass(int) {
     const TargetBufferFlags discardFlags = mRenderPassParams.flags.discardEnd;
     resolvePass(ResolveAction::STORE, rt, discardFlags);
 
+    if(NIBIRU_LOG_ENABLED)  slog.d << "OpenGLDriver::endRenderPass : fbo_read " << rt->gl.fbo_read << " fbo " << rt->gl.fbo << " discardFlags " << (int) discardFlags << io::endl;
     // glInvalidateFramebuffer appeared on GLES 3.0 and GL4.3, for simplicity we just
     // ignore it on GL (rather than having to do a runtime check).
     if (GLES31_HEADERS) {
-        if (!gl.bugs.disable_invalidate_framebuffer) {
+        #ifndef NIBIRU_CODE_ENABLED
+        if (!gl.bugs.disable_invalidate_framebuffer && rt->gl.fbo > 0) {
             // we wouldn't have to bind the framebuffer if we had glInvalidateNamedFramebuffer()
             gl.bindFramebuffer(GL_FRAMEBUFFER, rt->gl.fbo);
             std::array<GLenum, 3> attachments; // NOLINT
@@ -1910,7 +2285,10 @@ void OpenGLDriver::endRenderPass(int) {
                 glInvalidateFramebuffer(GL_FRAMEBUFFER, attachmentCount, attachments.data());
             }
            CHECK_GL_ERROR(utils::slog.e)
+           
+           if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver::endRenderPass glInvalidateFramebuffer " << io::endl;
         }
+        #endif
     }
 
 #ifndef NDEBUG
@@ -1919,8 +2297,10 @@ void OpenGLDriver::endRenderPass(int) {
     mContext.bindFramebuffer(GL_FRAMEBUFFER, rt->gl.fbo);
     mContext.disable(GL_SCISSOR_TEST);
     glClear(getAttachmentBitfield(discardFlags));
+    slog.d << "OpenGLDriver::endRenderPass disable GL_SCISSOR_TEST" << io::endl;
 #endif
 
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver::endRenderPass finish" << io::endl;
     mRenderPassTarget.clear();
 }
 
@@ -2439,6 +2819,7 @@ void OpenGLDriver::beginFrame(int64_t monotonic_clock_ns, uint32_t frameId) {
             }
         }
     }
+    // slog.d << "[Nibiru] FOpenGLDriver::beginFrame: " <<  frameId << io::endl;
 }
 
 void OpenGLDriver::setPresentationTime(int64_t monotonic_clock_ns) {
@@ -2454,6 +2835,8 @@ void OpenGLDriver::endFrame(uint32_t frameId) {
 void OpenGLDriver::flush(int) {
     DEBUG_MARKER()
     auto& gl = mContext;
+    
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver::glFlush=" << (int)gl.bugs.disable_glFlush << io::endl;
     if (!gl.bugs.disable_glFlush) {
         glFlush();
     }
@@ -2492,6 +2875,7 @@ void OpenGLDriver::clearWithRasterPipe(
         glClear(bitmask);
     }
     CHECK_GL_ERROR(utils::slog.e)
+    if(NIBIRU_LOG_ENABLED) slog.d << "OpenGLDriver clearWithRasterPipe end" << io::endl;
 }
 
 void OpenGLDriver::clearWithGeometryPipe(
@@ -2594,6 +2978,8 @@ void OpenGLDriver::blit(TargetBufferFlags buffers,
                 dstRect.left, dstRect.bottom, dstRect.right(), dstRect.top(),
                 mask, glFilterMode);
         CHECK_GL_ERROR(utils::slog.e)
+        slog.d << "OpenGLDriver::blit : src fbo=" << s->gl.fbo << " dst fbo=" <<  d->gl.fbo
+        << " srcRect " << srcRect.right() << " dstRect " << dstRect.right() << io::endl;
     }
 }
 
@@ -2644,6 +3030,8 @@ void OpenGLDriver::draw(PipelineState state, Handle<HwRenderPrimitive> rph) {
             rp->gl.indicesType, reinterpret_cast<const void*>(rp->offset));
 
     CHECK_GL_ERROR(utils::slog.e)
+    
+    //slog.d << "OpenGLDriver::draw" << io::endl;
 }
 
 // explicit instantiation of the Dispatcher

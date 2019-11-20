@@ -130,9 +130,11 @@ public:
 
 public:
     static FEngine* create(Backend backend = Backend::DEFAULT,
-            Platform* platform = nullptr, void* sharedGLContext = nullptr);
-
+            Platform* platform = nullptr, void* sharedGLContext = nullptr, long nibiruServicePtr = 0);
     ~FEngine() noexcept;
+
+    // nibiru code
+     long nvrServicePtr;
 
     backend::Driver& getDriver() const noexcept { return *mDriver; }
     DriverApi& getDriverApi() noexcept { return mCommandStream; }

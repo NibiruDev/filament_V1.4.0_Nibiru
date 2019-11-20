@@ -659,6 +659,42 @@ bool VulkanDriver::canGenerateMipmaps() {
     return false;
 }
 
+#ifdef NIBIRU_CODE_ENABLED
+void VulkanDriver::getHeadPose(int frameId, float* pose){
+    // do nothing
+}
+
+void VulkanDriver::getEyeBufferSize(int& width, int& height)
+{
+    // do nothing
+}
+
+void VulkanDriver::getEyeProjection(int eye, double* projection)
+{
+    // do nothing
+}
+
+void VulkanDriver::beginRenderFrame(int frameId)
+{
+   // do nothing
+}
+
+void VulkanDriver::endRenderFrame(int frameId , bool isSkipped)
+{
+   // do nothing
+}
+
+int VulkanDriver::getSubmitFrameStatus()
+{
+    return -1;
+}
+
+float VulkanDriver::getNearPlane()
+{
+    return 0.032f;
+}
+#endif
+
 void VulkanDriver::loadUniformBuffer(Handle<HwUniformBuffer> ubh, BufferDescriptor&& data) {
     if (data.size > 0) {
         auto* buffer = handle_cast<VulkanUniformBuffer>(mHandleMap, ubh);

@@ -26,6 +26,7 @@ class Driver;
 class OpenGLDriverFactory {
 public:
     static backend::Driver* create(backend::OpenGLPlatform* platform, void* sharedGLContext) noexcept;
+    static backend::Driver* create(backend::OpenGLPlatform* platform, void* sharedGLContext, long nvrService) noexcept;
 };
 
 } // namespace backend
