@@ -27,7 +27,7 @@ MainActivity.kt [Example code file]
 
 ### Step 1 Get an VR/AR HMD with Nibiru XR OS:
 
-Nibiru XR HMD: 
+Nibiru XR HMD:
 AR HMD : http://www.inibiru.com/en/product_ar.html
 VR HMD : http://www.inibiru.com/en/product_vr.html
 Please contact info@inibiru.com for sales support.
