@@ -60,11 +60,11 @@ if(nibiruVRService != null) { nibiruVRService.onPause(); }
 ```
 renderer.render(view) 
 ```
-####Between 
+#### Between 
 ```
 renderer.beginFrame -> renderer.endFrame 
 ```
-####As follow code 
+#### As follow code 
 ```
 if (renderer.beginFrame(swapChain!!)) 
 { 
