@@ -67,10 +67,8 @@ renderer.endFrame()
 # [Tip]
 
 If you want to compile the filament, you can refer to the offical wiki.
+https://github.com/google/filament
 
-[![](http://www.inibiru.com/en/img/public/logo.png)](http://www.inibiru.com/en/index.html)
-
-http://www.inibiru.com/en/index.html
 
 **[FileList Changed By Nibiru]**
 * android/filament-android/src/main/cpp/Engine.cpp 
@@ -87,3 +85,7 @@ http://www.inibiru.com/en/index.html
 * filament/src/details/Renderer.h filament/src/fg/FrameGraph.cpp 
 
 **[FileList Changed By Nibiru]**
+
+[![](http://www.inibiru.com/en/img/public/logo.png)](http://www.inibiru.com/en/index.html)
+
+http://www.inibiru.com/en/index.html
